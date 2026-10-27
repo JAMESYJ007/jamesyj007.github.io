@@ -1,0 +1,82 @@
+name: 百度主动推送
+
+# 等主站构建部署成功后，再把全站 URL 推给百度，缩短收录延迟
+on:
+  workflow_run:
+    workflows: ["Build and Deploy"]
+    types: [completed]
+  workflow_dispatch:   # 允许在 Actions 页面手动点一下触发
+
+jobs:
+  push:
+    # 只有主站构建成功、且配置了百度 token 时才执行
+    if: >
+      github.event.workflow_run.conclusion == 'success'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 等待站点生效
+        run: sleep 90
+
+      - name: 从 sitemap 抓取全站 URL 并推送百度
+        env:
+          BAIDU_SITE: ${{ secrets.BAIDU_SITE }}
+          BAIDU_TOKEN: ${{ secrets.BAIDU_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os, re, json, time
+          import urllib.request, urllib.parse
+
+          site  = os.environ.get("BAIDU_SITE", "https://jamesyj007.github.io").rstrip("/")
+          token = os.environ.get("BAIDU_TOKEN", "").strip()
+
+          # 没配 token 就跳过，不让工作流变红
+          if not token:
+              print("未配置 BAIDU_TOKEN，跳过推送（不影响站点部署）")
+              raise SystemExit(0)
+
+          # 1. 抓 sitemap
+          sitemap = f"{site}/sitemap.xml"
+          for attempt in range(5):
+              try:
+                  req = urllib.request.Request(sitemap, headers={"User-Agent": "Mozilla/5.0"})
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      xml = r.read().decode("utf-8", errors="ignore")
+                  break
+              except Exception as e:
+                  print(f"第 {attempt+1} 次抓取 sitemap 失败：{e}")
+                  time.sleep(20)
+          else:
+              print("sitemap 始终抓不到，跳过推送")
+              raise SystemExit(0)
+
+          urls = re.findall(r"<loc>(.*?)</loc>", xml, re.S)
+          urls = [u.strip() for u in urls if u.strip()]
+          print(f"sitemap 共 {len(urls)} 条 URL")
+
+          if not urls:
+              raise SystemExit(0)
+
+          # 2. 分批推送（百度单次上限 2000 条）
+          api = f"http://data.zz.baidu.com/urls?site={urllib.parse.quote(site, safe='')}&token={token}"
+          ok = 0
+          for i in range(0, len(urls), 2000):
+              chunk = urls[i:i+2000]
+              data = "\n".join(chunk).encode("utf-8")
+              req = urllib.request.Request(
+                  api, data=data,
+                  headers={"Content-Type": "text/plain", "User-Agent": "curl/7.12.1"},
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      res = json.loads(r.read().decode("utf-8"))
+                  if "success" in res:
+                      ok += res["success"]
+                      print(f"  第 {i//2000+1} 批：成功 {res['success']} 条，剩余配额 {res.get('remain')}")
+                  else:
+                      print(f"  第 {i//2000+1} 批返回异常：{res}")
+              except Exception as e:
+                  print(f"  第 {i//2000+1} 批推送失败：{e}")
+
+          print(f"完成，累计推送成功 {ok} 条")
+          PY

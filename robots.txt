@@ -1,0 +1,26 @@
+User-agent: *
+Allow: /
+
+# 显式放行主流搜索引擎爬虫（默认已放行，写出来自查与保险）
+User-agent: Baiduspider
+Allow: /
+
+User-agent: Sogou web spider
+Allow: /
+
+User-agent: 360Spider
+Allow: /
+
+User-agent: bingbot
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+
+# 屏蔽构建资源目录，避免爬虫抓取无效路径
+Disallow: /assets/js/
+Disallow: /assets/css/
+Disallow: /assets/lib/
+
+# 站点地图
+Sitemap: https://jamesyj007.github.io/sitemap.xml
